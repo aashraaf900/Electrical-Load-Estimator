@@ -35,8 +35,8 @@
                 padding: 0 !important;
             }
             @page {
-                size: A4 portrait;
-                margin: 15mm;
+                size: landscape;
+                margin: 10mm;
             }
             table {
                 page-break-inside: auto;
@@ -57,6 +57,9 @@
             input::placeholder, textarea::placeholder {
                 color: transparent !important;
             }
+            .page-break {
+                page-break-before: always;
+            }
         }
         
         .print-editable {
@@ -69,34 +72,106 @@
             background-color: #f8fafc;
             outline: none;
         }
+
+        /* SVG Breaker & SLD Styles */
+        .breaker-line { stroke: #1e293b; stroke-width: 2.5px; fill: none; stroke-linecap: round; }
+        .breaker-node { fill: white; stroke: #1e293b; stroke-width: 2.5px; }
+        .sld-line { background-color: #1e293b; }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-800 font-sans">
     <div id="root"></div>
 
-    <script type="text/babel">
-        const { useState, useMemo, useRef } = React;
+    <script type="text/babel" data-type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, deleteDoc, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const { useState, useMemo, useRef, useEffect } = React;
+
+        // Firebase Initialization
+        let app, auth, db;
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const initialToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        if (firebaseConfig) {
+            app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+        }
 
         // --- UI Icons ---
         const Plus = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>;
         const Trash2 = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>;
         const Zap = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>;
-        const Activity = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>;
         const TableIcon = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v18"></path><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M3 9h18"></path><path d="M3 15h18"></path></svg>;
         const Edit3 = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>;
         const Folder = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"></path></svg>;
         const ShieldAlert = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="M12 8v4"></path><path d="M12 16h.01"></path></svg>;
         const PrinterIcon = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>;
-        const LinkIcon = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>;
         const HomeIcon = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>;
         const SettingsIcon = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>;
         const UploadIcon = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>;
+        const GitBranch = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>;
+        const SaveIcon = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>;
+        const HistoryIcon = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path><path d="M12 7v5l4 2"></path></svg>;
+        const XIcon = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>;
+
+        // SVG SLD Breaker Symbol (Main SDB)
+        const BreakerIcon = () => (
+            <svg width="24" height="40" viewBox="0 0 24 40" className="overflow-visible">
+                <line x1="12" y1="0" x2="12" y2="12" className="breaker-line"/>
+                <circle cx="12" cy="14" r="2.5" className="breaker-node"/>
+                <line x1="12" y1="26" x2="18" y2="10" className="breaker-line"/>
+                <circle cx="12" cy="26" r="2.5" className="breaker-node"/>
+                <line x1="12" y1="28" x2="12" y2="40" className="breaker-line"/>
+            </svg>
+        );
+
+        // SVG SDB Breaker Symbol (New Arc Style for SLD)
+        const SdbBreakerIcon = () => (
+            <svg width="16" height="30" viewBox="0 0 16 30" className="overflow-visible">
+                <line x1="8" y1="0" x2="8" y2="8" stroke="#1e293b" strokeWidth="1.5"/>
+                <path d="M8,8 A 3.5 3.5 0 0 1 8,15" stroke="#1e293b" strokeWidth="1.5" fill="none"/>
+                <path d="M8,15 A 3.5 3.5 0 0 1 8,22" stroke="#1e293b" strokeWidth="1.5" fill="none"/>
+                <line x1="8" y1="22" x2="8" y2="30" stroke="#1e293b" strokeWidth="1.5"/>
+            </svg>
+        );
+
+        // SVG Switch Symbol (for SBs)
+        const SwitchIcon = () => (
+            <svg width="16" height="24" viewBox="0 0 16 24" className="overflow-visible">
+                <line x1="8" y1="0" x2="8" y2="6" stroke="#1e293b" strokeWidth="1.5"/>
+                <circle cx="8" cy="7" r="1.5" fill="#1e293b"/>
+                <line x1="8" y1="7" x2="14" y2="16" stroke="#1e293b" strokeWidth="1.5"/>
+                <circle cx="8" cy="17" r="1.5" fill="#1e293b"/>
+                <line x1="8" y1="18" x2="8" y2="24" stroke="#1e293b" strokeWidth="1.5"/>
+            </svg>
+        );
 
         function App() {
           const [activeTab, setActiveTab] = useState('WORKSPACE');
-          const [settings, setSettings] = useState({ voltage: 230, powerFactor: 0.85 });
+          const [settings, setSettings] = useState({ voltage: 230, powerFactor: 0.9 });
           
+          // Firebase & Storage States
+          const [user, setUser] = useState(null);
+          const [savedReports, setSavedReports] = useState([]);
+          const [saveModalOpen, setSaveModalOpen] = useState(false);
+          const [newReportName, setNewReportName] = useState("");
+          const [isSaving, setIsSaving] = useState(false);
+
+          // Floor and Lighting Group States
+          const [floors, setFloors] = useState([{ id: 'f-1', name: 'Ground Floor' }]);
+          const [activeFloorId, setActiveFloorId] = useState('f-1');
+          const [activeGroupId, setActiveGroupId] = useState(null);
           const [lightingGroups, setLightingGroups] = useState([]);
+
+          // SDB and Power Load States
+          const [sdbs, setSdbs] = useState([{ id: 'sdb-1', name: 'SDB-1' }]);
+          const [activeSdbId, setActiveSdbId] = useState('sdb-1');
+          const [reportSdbId, setReportSdbId] = useState(null);
+          const [sldSdbId, setSldSdbId] = useState(null);
           const [powerLoads, setPowerLoads] = useState([]);
 
           const [companyInfo, setCompanyInfo] = useState({
@@ -118,9 +193,85 @@
             pfLabel: "Power Factor",
             preparedBy: "Electrical Design Engineer",
             approvedBy: "Lead Engineering Consultant",
-            section1Title: "1. Group Details (Connected Loads before Diversity)",
+            section1Title: "1. Linked Group Details (Connected Loads before Diversity)",
             section2Title: "2. SDB Design Load (Linked Groups & Custom Loads)"
           });
+
+          // --- FIREBASE AUTH & DATA SYNC ---
+          useEffect(() => {
+            if (!auth) return;
+            const initAuth = async () => {
+              try {
+                if (initialToken) await signInWithCustomToken(auth, initialToken);
+                else await signInAnonymously(auth);
+              } catch (e) {
+                console.error("Auth error:", e);
+              }
+            };
+            initAuth();
+            const unsubscribe = onAuthStateChanged(auth, setUser);
+            return () => unsubscribe();
+          }, []);
+
+          useEffect(() => {
+            if (!user || !db) return;
+            const reportsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'reports');
+            const unsubscribe = onSnapshot(reportsRef, (snapshot) => {
+              const reports = [];
+              snapshot.forEach(doc => reports.push({ id: doc.id, ...doc.data() }));
+              reports.sort((a, b) => b.createdAt - a.createdAt); // Sort latest first
+              setSavedReports(reports);
+            }, (error) => {
+              console.error("Snapshot error:", error);
+            });
+            return () => unsubscribe();
+          }, [user]);
+
+          const handleSaveReport = async () => {
+            if (!user || !db || !newReportName.trim()) return;
+            setIsSaving(true);
+            try {
+              const reportData = {
+                name: newReportName,
+                createdAt: Date.now(),
+                dateString: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+                data: JSON.stringify({ settings, floors, lightingGroups, sdbs, powerLoads, companyInfo, clientInfo, printHeaders })
+              };
+              const reportsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'reports');
+              await addDoc(reportsRef, reportData);
+              setSaveModalOpen(false);
+              setNewReportName("");
+            } catch (error) {
+              console.error("Save error:", error);
+            }
+            setIsSaving(false);
+          };
+
+          const loadReport = (report) => {
+            try {
+              const d = JSON.parse(report.data);
+              if (d.settings) setSettings(d.settings);
+              if (d.floors) setFloors(d.floors);
+              if (d.lightingGroups) setLightingGroups(d.lightingGroups);
+              if (d.sdbs) setSdbs(d.sdbs);
+              if (d.powerLoads) setPowerLoads(d.powerLoads);
+              if (d.companyInfo) setCompanyInfo(d.companyInfo);
+              if (d.clientInfo) setClientInfo(d.clientInfo);
+              if (d.printHeaders) setPrintHeaders(d.printHeaders);
+              setActiveTab('WORKSPACE');
+            } catch (e) {
+              console.error("Error loading report:", e);
+            }
+          };
+
+          const deleteReport = async (id) => {
+            if (!user || !db) return;
+            try {
+              await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'reports', id));
+            } catch (error) {
+              console.error("Delete error:", error);
+            }
+          };
 
           const fileInputRef = useRef(null);
 
@@ -147,15 +298,38 @@
             return (wattage / (settings.voltage * settings.powerFactor)).toFixed(2);
           };
 
+          // EEE Standard Sizing Logics
+          const getMcbSize = (currentAmp) => {
+              const required = parseFloat(currentAmp) * 1.25; // 25% safety margin thumb rule
+              if (required <= 6) return 6;
+              if (required <= 10) return 10;
+              if (required <= 16) return 16;
+              if (required <= 20) return 20;
+              if (required <= 25) return 25;
+              if (required <= 32) return 32;
+              if (required <= 40) return 40;
+              if (required <= 50) return 50;
+              if (required <= 63) return 63;
+              if (required <= 80) return 80;
+              if (required <= 100) return 100;
+              if (required <= 125) return 125;
+              return Math.ceil(required);
+          };
+
+          const getCableSize = (amp) => {
+              if (amp <= 10) return "2 x 1.5mm² BYA + 1 x 1.5mm² ECC";
+              if (amp <= 20) return "2 x 2.5mm² BYA + 1 x 2.5mm² ECC";
+              if (amp <= 32) return "2 x 4.0mm² BYA + 1 x 4.0mm² ECC";
+              if (amp <= 40) return "2 x 6.0mm² BYA + 1 x 6.0mm² ECC";
+              if (amp <= 63) return "2 x 10.0mm² BYA + 1 x 10.0mm² ECC";
+              if (amp <= 100) return "2 x 16.0mm² BYA + 1 x 16.0mm² ECC";
+              return "2 x 25.0mm² BYA + 1 x 16.0mm² ECC";
+          };
+
           const updateSetting = (field, value) => setSettings({ ...settings, [field]: parseFloat(value) || 0 });
           const updatePrintHeader = (field, value) => setPrintHeaders({ ...printHeaders, [field]: value });
           const updateCompanyInfo = (field, value) => setCompanyInfo({ ...companyInfo, [field]: value });
           const updateClientInfo = (field, value) => setClientInfo({ ...clientInfo, [field]: value });
-
-          const handleTextareaResize = (e) => {
-              e.target.style.height = 'auto';
-              e.target.style.height = (e.target.scrollHeight) + 'px';
-          };
 
           const handleLogoUpload = (e) => {
               const file = e.target.files[0];
@@ -173,8 +347,36 @@
               if(fileInputRef.current) fileInputRef.current.value = "";
           };
 
+          // --- FLOOR FUNCTIONS ---
+          const addFloor = () => {
+              const newId = `f-${Date.now()}`;
+              setFloors([...floors, { id: newId, name: `Floor ${floors.length + 1}` }]);
+              setActiveFloorId(newId);
+          };
+
+          const updateFloorName = (floorId, name) => {
+              setFloors(floors.map(f => f.id === floorId ? { ...f, name } : f));
+          };
+
+          const deleteFloor = (floorId) => {
+              const remainingFloors = floors.filter(f => f.id !== floorId);
+              setFloors(remainingFloors);
+              
+              const groupsToDelete = lightingGroups.filter(g => g.floorId === floorId).map(g => g.id);
+              setLightingGroups(lightingGroups.filter(g => g.floorId !== floorId));
+              setPowerLoads(powerLoads.filter(pl => !(pl.type === 'GROUP' && groupsToDelete.includes(pl.refId))));
+              
+              if (activeFloorId === floorId) {
+                  setActiveFloorId(remainingFloors.length > 0 ? remainingFloors[0].id : null);
+              }
+          };
+
+          // --- GROUP & BOARD FUNCTIONS ---
           const addGroup = () => {
-            setLightingGroups([...lightingGroups, { id: `g-${Date.now()}`, name: `Group-${lightingGroups.length + 1}`, boards: [] }]);
+            if (!activeFloorId) return;
+            const newGroupId = `g-${Date.now()}`;
+            setLightingGroups([...lightingGroups, { id: newGroupId, floorId: activeFloorId, name: `Group-${lightingGroups.filter(g => g.floorId === activeFloorId).length + 1}`, boards: [] }]);
+            setActiveGroupId(newGroupId);
           };
 
           const updateGroupName = (groupId, name) => {
@@ -230,20 +432,44 @@
             } : g));
           };
 
+          // --- SDB FUNCTIONS ---
+          const addSdb = () => {
+              const newId = `sdb-${Date.now()}`;
+              setSdbs([...sdbs, { id: newId, name: `SDB-${sdbs.length + 1}` }]);
+              setActiveSdbId(newId);
+          };
+
+          const updateSdbName = (id, name) => {
+              setSdbs(sdbs.map(s => s.id === id ? { ...s, name } : s));
+          };
+
+          const deleteSdb = (id) => {
+              const remainingSdbs = sdbs.filter(s => s.id !== id);
+              setSdbs(remainingSdbs);
+              setPowerLoads(powerLoads.filter(pl => pl.sdbId !== id)); 
+              if (activeSdbId === id) setActiveSdbId(remainingSdbs.length > 0 ? remainingSdbs[0].id : null);
+              if (reportSdbId === id) setReportSdbId(remainingSdbs.length > 0 ? remainingSdbs[0].id : null);
+              if (sldSdbId === id) setSldSdbId(remainingSdbs.length > 0 ? remainingSdbs[0].id : null);
+          };
+
+          // --- POWER LOAD FUNCTIONS ---
           const addPowerLoad = (defaultName = '', defaultWatt = 0) => {
-            setPowerLoads([...powerLoads, { id: `pl-${Date.now()}`, type: 'CUSTOM', name: defaultName, qty: 1, watt: defaultWatt, diversity: 1.0 }]);
+            if (!activeSdbId) return;
+            setPowerLoads([...powerLoads, { id: `pl-${Date.now()}`, sdbId: activeSdbId, type: 'CUSTOM', name: defaultName, qty: 1, watt: defaultWatt, diversity: 1.0 }]);
           };
 
           const addGroupToPowerLoads = (groupId) => {
-            if(powerLoads.some(pl => pl.type === 'GROUP' && pl.refId === groupId)) return;
+            if (!activeSdbId) return;
+            if(powerLoads.some(pl => pl.type === 'GROUP' && pl.refId === groupId)) return; 
             setPowerLoads([...powerLoads, { 
                 id: `pl-${Date.now()}`, 
+                sdbId: activeSdbId,
                 type: 'GROUP', 
                 refId: groupId, 
                 name: '', 
                 qty: 1, 
                 watt: 0, 
-                diversity: 0.8 
+                diversity: 0.7 
             }]);
           };
 
@@ -253,6 +479,12 @@
 
           const deletePowerLoad = (plId) => setPowerLoads(powerLoads.filter(pl => pl.id !== plId));
           const handlePrint = () => window.print();
+
+          // --- COMPUTATIONS ---
+          const currentFloorGroups = activeFloorId ? lightingGroups.filter(g => g.floorId === activeFloorId) : [];
+          const displayGroupId = currentFloorGroups.some(g => g.id === activeGroupId) 
+              ? activeGroupId 
+              : (currentFloorGroups.length > 0 ? currentFloorGroups[0].id : null);
 
           const { lightingGroupsList, lightingGroupsMap, totalConnectedLighting } = useMemo(() => {
             let total = 0;
@@ -267,7 +499,8 @@
               });
               
               total += gTotal;
-              map[g.id] = { id: g.id, name: g.name, boards: boardsWithTotals, totalWatt: gTotal, current: calculateCurrent(gTotal) };
+              const floorName = floors.find(f => f.id === g.floorId)?.name || 'Unknown Floor';
+              map[g.id] = { id: g.id, floorId: g.floorId, floorName, name: g.name, displayName: `${floorName} - ${g.name}`, boards: boardsWithTotals, totalWatt: gTotal, current: calculateCurrent(gTotal) };
             });
 
             return {
@@ -275,9 +508,9 @@
               lightingGroupsMap: map,
               totalConnectedLighting: total
             };
-          }, [lightingGroups, settings]);
+          }, [lightingGroups, settings, floors]);
 
-          const { processedPowerLoads, totalDesignPower, finalTotalCurrent } = useMemo(() => {
+          const { processedPowerLoads, globalTotalPower, globalTotalCurrent } = useMemo(() => {
             let totalW = 0;
             const processed = powerLoads.map(pl => {
                 let currentWatt = pl.watt;
@@ -286,7 +519,7 @@
                 if (pl.type === 'GROUP') {
                     const groupData = lightingGroupsMap[pl.refId];
                     currentWatt = groupData ? groupData.totalWatt : 0;
-                    displayName = groupData ? groupData.name : 'Unknown Group';
+                    displayName = groupData ? groupData.displayName : 'Unknown Group';
                 }
                 
                 const finalW = pl.qty * currentWatt * pl.diversity;
@@ -296,10 +529,31 @@
 
             return {
                 processedPowerLoads: processed,
-                totalDesignPower: totalW,
-                finalTotalCurrent: calculateCurrent(totalW)
+                globalTotalPower: totalW,
+                globalTotalCurrent: calculateCurrent(totalW)
             };
           }, [powerLoads, lightingGroupsMap, settings]);
+
+          // Power Tab Filter
+          const currentSdbPowerLoads = processedPowerLoads.filter(pl => pl.sdbId === activeSdbId);
+          const currentSdbTotalWatt = currentSdbPowerLoads.reduce((sum, pl) => sum + pl.finalWatt, 0);
+          const currentSdbTotalCurrent = calculateCurrent(currentSdbTotalWatt);
+
+          // Report Tab Filter
+          const effectiveReportSdbId = sdbs.some(s => s.id === reportSdbId) ? reportSdbId : (sdbs[0]?.id || null);
+          const reportSdbName = sdbs.find(s => s.id === effectiveReportSdbId)?.name || 'All Loads';
+          const reportPowerLoads = processedPowerLoads.filter(pl => pl.sdbId === effectiveReportSdbId);
+          const reportGroupIds = reportPowerLoads.filter(pl => pl.type === 'GROUP').map(pl => pl.refId);
+          const reportLightingGroups = lightingGroupsList.filter(g => reportGroupIds.includes(g.id));
+          const reportTotalWatt = reportPowerLoads.reduce((sum, pl) => sum + pl.finalWatt, 0);
+          const reportTotalCurrent = calculateCurrent(reportTotalWatt);
+
+          // SLD Filter
+          const effectiveSldSdbId = sdbs.some(s => s.id === sldSdbId) ? sldSdbId : (sdbs[0]?.id || null);
+          const sldSdbName = sdbs.find(s => s.id === effectiveSldSdbId)?.name || 'SDB';
+          const sldPowerLoads = processedPowerLoads.filter(pl => pl.sdbId === effectiveSldSdbId);
+          const sldTotalWatt = sldPowerLoads.reduce((sum, pl) => sum + pl.finalWatt, 0);
+          const sldTotalCurrent = calculateCurrent(sldTotalWatt);
 
           return (
             <div className="min-h-screen pb-24">
@@ -316,7 +570,9 @@
                       <button onClick={() => setActiveTab('WORKSPACE')} className={`flex items-center whitespace-nowrap gap-2 px-4 py-2 rounded-md font-medium transition-colors ${activeTab === 'WORKSPACE' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-white'}`}><HomeIcon className="w-4 h-4" /> Workspace</button>
                       <button onClick={() => setActiveTab('LIGHTING')} className={`flex items-center whitespace-nowrap gap-2 px-4 py-2 rounded-md font-medium transition-colors ${activeTab === 'LIGHTING' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-white'}`}><Edit3 className="w-4 h-4" /> Lighting (SB)</button>
                       <button onClick={() => setActiveTab('POWER')} className={`flex items-center whitespace-nowrap gap-2 px-4 py-2 rounded-md font-medium transition-colors ${activeTab === 'POWER' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-white'}`}><ShieldAlert className="w-4 h-4" /> Power (SDB)</button>
+                      <button onClick={() => setActiveTab('DIAGRAM')} className={`flex items-center whitespace-nowrap gap-2 px-4 py-2 rounded-md font-medium transition-colors ${activeTab === 'DIAGRAM' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-white'}`}><GitBranch className="w-4 h-4" /> SLD</button>
                       <button onClick={() => setActiveTab('SUMMARY')} className={`flex items-center whitespace-nowrap gap-2 px-4 py-2 rounded-md font-medium transition-colors ${activeTab === 'SUMMARY' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-white'}`}><TableIcon className="w-4 h-4" /> Report</button>
+                      <button onClick={() => setActiveTab('HISTORY')} className={`flex items-center whitespace-nowrap gap-2 px-4 py-2 rounded-md font-medium transition-colors ${activeTab === 'HISTORY' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-white'}`}><HistoryIcon className="w-4 h-4" /> History</button>
                       <button onClick={() => setActiveTab('SETTINGS')} className={`flex items-center whitespace-nowrap gap-2 px-4 py-2 rounded-md font-medium transition-colors ${activeTab === 'SETTINGS' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-white'}`}><SettingsIcon className="w-4 h-4" /> Settings</button>
                     </div>
                   </div>
@@ -402,135 +658,436 @@
                 {/* --- TAB: LIGHTING --- */}
                 {activeTab === 'LIGHTING' && (
                   <div className="space-y-6 no-print">
-                    <div className="flex justify-between items-center bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                      <h2 className="text-lg font-bold text-slate-800">Connected Loads Configuration</h2>
-                      <button onClick={addGroup} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium shadow-sm hover:bg-blue-700 flex items-center gap-2">
-                        <Plus className="w-4 h-4" /> New Group
-                      </button>
+                    
+                    {/* Floor Selection Bar */}
+                    <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center gap-3 overflow-hidden">
+                      <span className="text-sm font-bold text-slate-700 shrink-0 flex items-center gap-2"><TableIcon className="w-4 h-4 text-slate-400"/> Floors:</span>
+                      <div className="flex-1 flex gap-2 overflow-x-auto w-full pb-2 sm:pb-0 items-center">
+                        {floors.map(f => (
+                           <div key={f.id} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all shrink-0 ${activeFloorId === f.id ? 'bg-blue-50 border-blue-300 shadow-sm' : 'bg-slate-50 border-slate-200 hover:bg-slate-100 cursor-pointer'}`} onClick={() => activeFloorId !== f.id && setActiveFloorId(f.id)}>
+                              {activeFloorId === f.id ? (
+                                <>
+                                  <input type="text" value={f.name} onChange={(e) => updateFloorName(f.id, e.target.value)} className="bg-transparent font-bold text-blue-800 focus:outline-none w-28 sm:w-32 text-sm" placeholder="Floor Name" autoFocus />
+                                  <button onClick={(e) => { e.stopPropagation(); deleteFloor(f.id); }} className="text-blue-300 hover:text-red-500 transition ml-1" title="Delete Floor"><Trash2 className="w-3.5 h-3.5" /></button>
+                                </>
+                              ) : (
+                                <span className="font-semibold text-slate-600 text-sm whitespace-nowrap">{f.name}</span>
+                              )}
+                           </div>
+                        ))}
+                        <button onClick={addFloor} className="shrink-0 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-sm font-bold transition border border-dashed border-slate-300 flex items-center gap-1"><Plus className="w-4 h-4"/> Add Floor</button>
+                      </div>
                     </div>
 
-                    {lightingGroupsList.length === 0 && (
-                      <div className="text-center py-20 bg-white border border-slate-200 rounded-xl">
-                        <p className="text-slate-500 font-medium">No records found.</p>
+                    {/* Group Selection Bar */}
+                    {activeFloorId && (
+                      <div className="bg-slate-800 p-2 rounded-xl shadow-inner flex gap-2 overflow-x-auto items-center">
+                        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider pl-2 pr-1 shrink-0">Groups:</span>
+                        {currentFloorGroups.map(group => (
+                          <button key={group.id} onClick={() => setActiveGroupId(group.id)} className={`shrink-0 px-4 py-2 rounded-lg text-sm font-bold transition whitespace-nowrap ${displayGroupId === group.id ? 'bg-blue-500 text-white shadow-md' : 'bg-slate-700 text-slate-300 hover:bg-slate-600 hover:text-white'}`}>
+                            {group.name}
+                          </button>
+                        ))}
+                        <button onClick={addGroup} className="shrink-0 px-3 py-2 bg-slate-700/50 hover:bg-slate-600 text-slate-300 border border-dashed border-slate-500 rounded-lg text-sm font-bold transition flex items-center gap-1"><Plus className="w-4 h-4"/> New Group</button>
                       </div>
                     )}
 
-                    {lightingGroupsList.map(group => (
-                      <div key={group.id} className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-                        <div className="bg-slate-50 p-4 border-b border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                           <div className="flex items-center gap-3 w-full md:w-auto">
-                              <Folder className="w-5 h-5 text-slate-400" />
-                              <input type="text" value={group.name} onChange={(e) => updateGroupName(group.id, e.target.value)} className="bg-white border border-slate-300 px-3 py-1.5 rounded-lg font-bold text-slate-800 focus:outline-none focus:border-blue-500 w-full sm:w-64" placeholder="Group Name" />
-                           </div>
-                           <div className="flex items-center gap-6">
-                              <div className="text-right">
-                                <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider block">Connected Load</span>
-                                <span className="text-lg font-bold text-slate-800">{group.totalWatt} W</span>
-                              </div>
-                              <button onClick={() => deleteGroup(group.id)} className="text-red-500 hover:bg-red-50 p-2 rounded-lg transition shrink-0">
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                           </div>
-                        </div>
-
-                        <div className="p-4 sm:p-6 space-y-6">
-                          {group.boards.length === 0 ? (
-                            <div className="text-center py-4 text-slate-400 text-sm">0 Items</div>
-                          ) : (
-                            group.boards.map((board, bIndex) => (
-                              <div key={board.id} className="border border-slate-200 rounded-lg overflow-hidden">
-                                <div className="bg-slate-50 px-4 py-2 border-b border-slate-200 flex justify-between items-center">
-                                  <div className="flex items-center gap-3">
-                                    <div className="bg-slate-200 text-slate-600 w-6 h-6 rounded flex items-center justify-center text-xs font-bold shrink-0">{bIndex + 1}</div>
-                                    <input type="text" value={board.name} onChange={(e) => updateBoardName(group.id, board.id, e.target.value)} className="bg-white border border-slate-300 px-2 py-1 rounded text-sm font-semibold text-slate-700 focus:outline-none focus:border-blue-500 w-48" placeholder="Board Name" />
-                                  </div>
-                                  <button onClick={() => deleteBoard(group.id, board.id)} className="text-slate-400 hover:text-red-500 p-1"><Trash2 className="w-4 h-4" /></button>
-                                </div>
-
-                                <div className="p-3">
-                                  <div className="space-y-2 mb-3">
-                                    {board.points.map(point => (
-                                      <div key={point.id} className="flex flex-col sm:flex-row gap-2 sm:gap-4 items-center">
-                                        <input type="text" value={point.name} onChange={(e) => updateLightingPoint(group.id, board.id, point.id, 'name', e.target.value)} className="w-full sm:flex-1 border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:border-blue-500" placeholder="Point Name" />
-                                        <input type="number" min="1" value={point.qty || ''} onChange={(e) => updateLightingPoint(group.id, board.id, point.id, 'qty', e.target.value)} className="w-full sm:w-20 border border-slate-300 rounded px-2 py-1 text-sm text-center focus:outline-none focus:border-blue-500" placeholder="Qty" />
-                                        <input type="number" min="0" value={point.watt === 0 && point.watt !== '0' ? '' : point.watt} onChange={(e) => updateLightingPoint(group.id, board.id, point.id, 'watt', e.target.value)} className="w-full sm:w-24 border border-slate-300 rounded px-2 py-1 text-sm text-center focus:outline-none focus:border-blue-500" placeholder="Watt" />
-                                        <div className="w-full sm:w-24 text-right font-bold text-slate-700 text-sm">{(point.qty * point.watt) || 0} W</div>
-                                        <button onClick={() => deleteLightingPoint(group.id, board.id, point.id)} className="p-1 text-slate-300 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
-                                      </div>
-                                    ))}
-                                  </div>
-                                  <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
-                                    {lightingDefaults.map(item => (
-                                      <button key={item.label} onClick={() => addLightingPoint(group.id, board.id, item.full, item.w)} className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-xs font-medium transition border border-slate-200">{item.label}</button>
-                                    ))}
-                                    <button onClick={() => addLightingPoint(group.id, board.id, '', 0)} className="px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded text-xs font-bold hover:bg-blue-100 transition">+ Custom</button>
-                                  </div>
-                                </div>
-                              </div>
-                            ))
-                          )}
-                          <button onClick={() => addBoard(group.id)} className="w-full py-2 border border-dashed border-slate-300 text-slate-500 font-medium rounded hover:bg-slate-50 transition flex items-center justify-center gap-2 text-sm">
-                            <Plus className="w-4 h-4" /> Switchboard
-                          </button>
-                        </div>
+                    {!activeFloorId ? (
+                      <div className="text-center py-16 bg-white border border-slate-200 rounded-xl shadow-sm">
+                        <p className="text-slate-500 font-medium">Please add or select a Floor to start.</p>
                       </div>
-                    ))}
+                    ) : !displayGroupId ? (
+                      <div className="text-center py-16 bg-white border border-slate-200 rounded-xl shadow-sm">
+                        <p className="text-slate-500 font-medium">Create a New Group for this floor to add Switchboards.</p>
+                      </div>
+                    ) : (
+                      lightingGroupsList.filter(g => g.id === displayGroupId).map(group => (
+                        <div key={group.id} className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+                          <div className="bg-slate-50 p-4 border-b border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                             <div className="flex items-center gap-3 w-full md:w-auto">
+                                <Folder className="w-5 h-5 text-slate-400" />
+                                <input type="text" value={group.name} onChange={(e) => updateGroupName(group.id, e.target.value)} className="bg-white border border-slate-300 px-3 py-1.5 rounded-lg font-bold text-slate-800 focus:outline-none focus:border-blue-500 w-full sm:w-64" placeholder="Group Name" />
+                             </div>
+                             <div className="flex items-center gap-6">
+                                <div className="text-right">
+                                  <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider block">Connected Load</span>
+                                  <span className="text-lg font-bold text-slate-800">{group.totalWatt} W <span className="text-slate-400 mx-1">|</span> {group.current} A</span>
+                                </div>
+                                <button onClick={() => deleteGroup(group.id)} className="text-red-500 hover:bg-red-50 p-2 rounded-lg transition shrink-0" title="Delete Group">
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                             </div>
+                          </div>
+
+                          <div className="p-4 sm:p-6 space-y-6">
+                            {group.boards.length === 0 ? (
+                              <div className="text-center py-4 text-slate-400 text-sm">0 Switchboards added.</div>
+                            ) : (
+                              group.boards.map((board, bIndex) => (
+                                <div key={board.id} className="border border-slate-200 rounded-lg overflow-hidden">
+                                  <div className="bg-slate-50 px-4 py-2 border-b border-slate-200 flex justify-between items-center">
+                                    <div className="flex items-center gap-3">
+                                      <div className="bg-slate-200 text-slate-600 w-6 h-6 rounded flex items-center justify-center text-xs font-bold shrink-0">{bIndex + 1}</div>
+                                      <input type="text" value={board.name} onChange={(e) => updateBoardName(group.id, board.id, e.target.value)} className="bg-white border border-slate-300 px-2 py-1 rounded text-sm font-semibold text-slate-700 focus:outline-none focus:border-blue-500 w-48" placeholder="Board Name" />
+                                    </div>
+                                    <div className="flex items-center gap-4">
+                                      <div className="text-right text-xs font-bold bg-white px-3 py-1 rounded border border-slate-200 shadow-sm">
+                                        <span className="text-amber-600">{board.totalWatt} W</span> <span className="text-slate-300 mx-1">/</span> <span className="text-blue-600">{board.current} A</span>
+                                      </div>
+                                      <button onClick={() => deleteBoard(group.id, board.id)} className="text-slate-400 hover:text-red-500 p-1"><Trash2 className="w-4 h-4" /></button>
+                                    </div>
+                                  </div>
+
+                                  <div className="p-3">
+                                    <div className="space-y-2 mb-3">
+                                      {board.points.map(point => (
+                                        <div key={point.id} className="flex flex-col sm:flex-row gap-2 sm:gap-4 items-center">
+                                          <input type="text" value={point.name} onChange={(e) => updateLightingPoint(group.id, board.id, point.id, 'name', e.target.value)} className="w-full sm:flex-1 border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:border-blue-500" placeholder="Point Name" />
+                                          <input type="number" min="1" value={point.qty || ''} onChange={(e) => updateLightingPoint(group.id, board.id, point.id, 'qty', e.target.value)} className="w-full sm:w-20 border border-slate-300 rounded px-2 py-1 text-sm text-center focus:outline-none focus:border-blue-500" placeholder="Qty" />
+                                          <input type="number" min="0" value={point.watt === 0 && point.watt !== '0' ? '' : point.watt} onChange={(e) => updateLightingPoint(group.id, board.id, point.id, 'watt', e.target.value)} className="w-full sm:w-24 border border-slate-300 rounded px-2 py-1 text-sm text-center focus:outline-none focus:border-blue-500" placeholder="Watt" />
+                                          <div className="w-full sm:w-24 text-right font-bold text-slate-700 text-sm">{(point.qty * point.watt) || 0} W</div>
+                                          <button onClick={() => deleteLightingPoint(group.id, board.id, point.id)} className="p-1 text-slate-300 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
+                                        </div>
+                                      ))}
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+                                      {lightingDefaults.map(item => (
+                                        <button key={item.label} onClick={() => addLightingPoint(group.id, board.id, item.full, item.w)} className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-xs font-medium transition border border-slate-200">{item.label}</button>
+                                      ))}
+                                      <button onClick={() => addLightingPoint(group.id, board.id, '', 0)} className="px-2 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded text-xs font-bold hover:bg-blue-100 transition">+ Custom</button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))
+                            )}
+                            <button onClick={() => addBoard(group.id)} className="w-full py-2 border border-dashed border-slate-300 text-slate-500 font-medium rounded hover:bg-slate-50 transition flex items-center justify-center gap-2 text-sm">
+                              <Plus className="w-4 h-4" /> Switchboard
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 )}
 
                 {/* --- TAB: POWER --- */}
                 {activeTab === 'POWER' && (
                   <div className="space-y-6 no-print">
-                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                      <div className="bg-slate-50 border-b border-slate-200 p-4 flex flex-wrap items-center gap-3">
-                        <span className="text-sm font-bold text-slate-700">Link Connected Groups:</span>
-                        {lightingGroupsList.length === 0 && <span className="text-sm text-slate-400">Data unavailable.</span>}
-                        {lightingGroupsList.map(g => {
-                          const isAdded = powerLoads.some(pl => pl.type === 'GROUP' && pl.refId === g.id);
-                          return (
-                            <button key={g.id} onClick={() => !isAdded && addGroupToPowerLoads(g.id)} disabled={isAdded} className={`px-3 py-1.5 rounded text-xs font-bold transition border ${isAdded ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-white hover:bg-blue-50 hover:text-blue-700 text-slate-600 border-slate-300 shadow-sm'}`}>
-                              {isAdded ? `✓ ${g.name}` : `+ ${g.name} (${g.totalWatt}W)`}
-                            </button>
-                          );
-                        })}
+                    
+                    {/* SDB Selection Bar */}
+                    <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center gap-3 overflow-hidden">
+                      <span className="text-sm font-bold text-slate-700 shrink-0 flex items-center gap-2"><ShieldAlert className="w-4 h-4 text-slate-400"/> SDB Boards:</span>
+                      <div className="flex-1 flex gap-2 overflow-x-auto w-full pb-2 sm:pb-0 items-center">
+                        {sdbs.map(sdb => (
+                           <div key={sdb.id} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all shrink-0 ${activeSdbId === sdb.id ? 'bg-amber-50 border-amber-300 shadow-sm' : 'bg-slate-50 border-slate-200 hover:bg-slate-100 cursor-pointer'}`} onClick={() => activeSdbId !== sdb.id && setActiveSdbId(sdb.id)}>
+                              {activeSdbId === sdb.id ? (
+                                <>
+                                  <input type="text" value={sdb.name} onChange={(e) => updateSdbName(sdb.id, e.target.value)} className="bg-transparent font-bold text-amber-800 focus:outline-none w-28 sm:w-32 text-sm" placeholder="SDB Name" autoFocus />
+                                  <button onClick={(e) => { e.stopPropagation(); deleteSdb(sdb.id); }} className="text-amber-400 hover:text-red-500 transition ml-1" title="Delete SDB"><Trash2 className="w-3.5 h-3.5" /></button>
+                                </>
+                              ) : (
+                                <span className="font-semibold text-slate-600 text-sm whitespace-nowrap">{sdb.name}</span>
+                              )}
+                           </div>
+                        ))}
+                        <button onClick={addSdb} className="shrink-0 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-sm font-bold transition border border-dashed border-slate-300 flex items-center gap-1"><Plus className="w-4 h-4"/> Add SDB</button>
                       </div>
+                    </div>
 
-                      <div className="p-6">
-                        <div className="space-y-3 mb-6">
-                          <div className="hidden sm:flex gap-4 text-xs font-semibold text-slate-500 uppercase tracking-wider px-2">
-                            <div className="flex-1">Load Definition</div>
-                            <div className="w-20 text-center">Qty</div>
-                            <div className="w-24 text-center">Base W</div>
-                            <div className="w-24 text-center">DF</div>
-                            <div className="w-24 text-right">Final W</div>
-                            <div className="w-8"></div>
-                          </div>
-
-                          {processedPowerLoads.length === 0 && (
-                            <div className="text-center py-8 text-slate-400 border border-dashed rounded-lg">0 Items</div>
-                          )}
-
-                          {processedPowerLoads.map(pl => {
-                            const isGroup = pl.type === 'GROUP';
+                    {!activeSdbId ? (
+                      <div className="text-center py-16 bg-white border border-slate-200 rounded-xl shadow-sm">
+                        <p className="text-slate-500 font-medium">Please add or select an SDB to configure power loads.</p>
+                      </div>
+                    ) : (
+                      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                        
+                        <div className="bg-slate-50 border-b border-slate-200 p-4 flex flex-wrap items-center gap-3">
+                          <span className="text-sm font-bold text-slate-700">Link Connected Groups to {sdbs.find(s=>s.id === activeSdbId)?.name}:</span>
+                          {lightingGroupsList.length === 0 && <span className="text-sm text-slate-400">No lighting groups available.</span>}
+                          {lightingGroupsList.map(g => {
+                            const isAddedGlobally = powerLoads.some(pl => pl.type === 'GROUP' && pl.refId === g.id);
                             return (
-                              <div key={pl.id} className={`flex flex-col sm:flex-row gap-2 sm:gap-4 items-center p-3 sm:p-2 rounded border ${isGroup ? 'bg-slate-50 border-slate-200' : 'border-slate-200'}`}>
-                                <input type="text" value={pl.displayName} onChange={(e) => !isGroup && updatePowerLoad(pl.id, 'name', e.target.value)} disabled={isGroup} className={`w-full sm:flex-1 border rounded px-3 py-1.5 text-sm focus:outline-none ${isGroup ? 'bg-transparent border-transparent font-semibold text-slate-700' : 'border-slate-300 focus:border-blue-500'}`} placeholder="Load Name" />
-                                <input type="number" min="1" value={pl.qty || ''} onChange={(e) => !isGroup && updatePowerLoad(pl.id, 'qty', e.target.value)} disabled={isGroup} className={`w-full sm:w-20 border rounded px-2 py-1.5 text-sm text-center ${isGroup ? 'bg-transparent border-transparent font-semibold text-slate-700' : 'border-slate-300 focus:border-blue-500'}`} placeholder="Qty" />
-                                <input type="number" min="0" value={pl.displayWatt === 0 && pl.displayWatt !== '0' ? '' : pl.displayWatt} onChange={(e) => !isGroup && updatePowerLoad(pl.id, 'watt', e.target.value)} disabled={isGroup} className={`w-full sm:w-24 border rounded px-2 py-1.5 text-sm text-center ${isGroup ? 'bg-transparent border-transparent font-semibold text-slate-700' : 'border-slate-300 focus:border-blue-500'}`} placeholder="Watt" />
-                                <input type="number" step="0.05" min="0" max="1" value={pl.diversity} onChange={(e) => updatePowerLoad(pl.id, 'diversity', e.target.value)} className="w-full sm:w-24 border border-slate-300 bg-white font-semibold rounded px-2 py-1.5 text-sm text-center focus:outline-none focus:border-blue-500" title="Diversity Factor" />
-                                <div className="w-full sm:w-24 text-right font-bold text-slate-800">{pl.finalWatt.toFixed(1)} W</div>
-                                <button onClick={() => deletePowerLoad(pl.id)} className="w-full sm:w-8 p-1.5 text-slate-400 hover:text-red-500 flex justify-center"><Trash2 className="w-4 h-4" /></button>
-                              </div>
+                              <button key={g.id} onClick={() => !isAddedGlobally && addGroupToPowerLoads(g.id)} disabled={isAddedGlobally} className={`px-3 py-1.5 rounded text-xs font-bold transition border ${isAddedGlobally ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-white hover:bg-amber-50 hover:text-amber-700 text-slate-600 border-slate-300 shadow-sm'}`}>
+                                {isAddedGlobally ? `✓ ${g.displayName}` : `+ ${g.displayName} (${g.totalWatt}W)`}
+                              </button>
                             );
                           })}
                         </div>
-                        <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4">
-                          {powerDefaults.map(item => (
-                            <button key={item.label} onClick={() => addPowerLoad(item.full, item.w)} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded text-xs font-medium text-slate-700 transition border border-slate-200">{item.label}</button>
-                          ))}
-                          <button onClick={() => addPowerLoad('', 0)} className="px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded text-xs font-bold hover:bg-blue-100 transition">+ Custom Load</button>
+
+                        <div className="p-6">
+                          <div className="space-y-3 mb-6">
+                            <div className="hidden sm:flex gap-4 text-xs font-semibold text-slate-500 uppercase tracking-wider px-2">
+                              <div className="flex-1">Load Definition</div>
+                              <div className="w-20 text-center">Qty</div>
+                              <div className="w-24 text-center">Base W</div>
+                              <div className="w-24 text-center">DF</div>
+                              <div className="w-24 text-right">Final W</div>
+                              <div className="w-8"></div>
+                            </div>
+
+                            {currentSdbPowerLoads.length === 0 && (
+                              <div className="text-center py-8 text-slate-400 border border-dashed rounded-lg">0 Items configured for this SDB.</div>
+                            )}
+
+                            {currentSdbPowerLoads.map(pl => {
+                              const isGroup = pl.type === 'GROUP';
+                              return (
+                                <div key={pl.id} className={`flex flex-col sm:flex-row gap-2 sm:gap-4 items-center p-3 sm:p-2 rounded border ${isGroup ? 'bg-slate-50 border-slate-200' : 'border-slate-200'}`}>
+                                  <input type="text" value={pl.displayName} onChange={(e) => !isGroup && updatePowerLoad(pl.id, 'name', e.target.value)} disabled={isGroup} className={`w-full sm:flex-1 border rounded px-3 py-1.5 text-sm focus:outline-none ${isGroup ? 'bg-transparent border-transparent font-semibold text-slate-700' : 'border-slate-300 focus:border-amber-500'}`} placeholder="Load Name" />
+                                  <input type="number" min="1" value={pl.qty || ''} onChange={(e) => !isGroup && updatePowerLoad(pl.id, 'qty', e.target.value)} disabled={isGroup} className={`w-full sm:w-20 border rounded px-2 py-1.5 text-sm text-center ${isGroup ? 'bg-transparent border-transparent font-semibold text-slate-700' : 'border-slate-300 focus:border-amber-500'}`} placeholder="Qty" />
+                                  <input type="number" min="0" value={pl.displayWatt === 0 && pl.displayWatt !== '0' ? '' : pl.displayWatt} onChange={(e) => !isGroup && updatePowerLoad(pl.id, 'watt', e.target.value)} disabled={isGroup} className={`w-full sm:w-24 border rounded px-2 py-1.5 text-sm text-center ${isGroup ? 'bg-transparent border-transparent font-semibold text-slate-700' : 'border-slate-300 focus:border-amber-500'}`} placeholder="Watt" />
+                                  <input type="number" step="0.05" min="0" max="1" value={pl.diversity} onChange={(e) => updatePowerLoad(pl.id, 'diversity', e.target.value)} className="w-full sm:w-24 border border-slate-300 bg-white font-semibold rounded px-2 py-1.5 text-sm text-center focus:outline-none focus:border-amber-500" title="Diversity Factor" />
+                                  <div className="w-full sm:w-24 text-right font-bold text-slate-800">{pl.finalWatt.toFixed(1)} W</div>
+                                  <button onClick={() => deletePowerLoad(pl.id)} className="w-full sm:w-8 p-1.5 text-slate-400 hover:text-red-500 flex justify-center"><Trash2 className="w-4 h-4" /></button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4">
+                            {powerDefaults.map(item => (
+                              <button key={item.label} onClick={() => addPowerLoad(item.full, item.w)} className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded text-xs font-medium text-slate-700 transition border border-slate-200">{item.label}</button>
+                            ))}
+                            <button onClick={() => addPowerLoad('', 0)} className="px-3 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded text-xs font-bold hover:bg-amber-100 transition">+ Custom Load</button>
+                          </div>
+                        </div>
+
+                        {/* SDB Total Summary Box */}
+                        <div className="bg-slate-800 text-white p-4 flex flex-col sm:flex-row justify-between items-center px-6">
+                           <div className="font-bold text-slate-300 text-sm">Total Summary for {sdbs.find(s=>s.id === activeSdbId)?.name}</div>
+                           <div className="flex gap-6 mt-2 sm:mt-0">
+                              <div className="text-right">
+                                 <div className="text-xs text-slate-400 uppercase">Design Watt</div>
+                                 <div className="text-lg font-bold text-amber-400">{currentSdbTotalWatt.toFixed(1)} W</div>
+                              </div>
+                              <div className="text-right">
+                                 <div className="text-xs text-slate-400 uppercase">Design Current</div>
+                                 <div className="text-lg font-bold text-blue-400">{currentSdbTotalCurrent} A</div>
+                              </div>
+                           </div>
+                        </div>
+
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* --- TAB: SLD DIAGRAM --- */}
+                {activeTab === 'DIAGRAM' && (
+                  <div className="space-y-6">
+                    
+                    {/* SLD Selection and Print Options (No Print) */}
+                    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-center gap-4 no-print">
+                      <div className="flex items-center gap-3 w-full md:w-auto overflow-x-auto pb-2 md:pb-0">
+                         <span className="text-sm font-bold text-slate-700 shrink-0">Generate SLD For:</span>
+                         {sdbs.map(sdb => (
+                            <button key={sdb.id} onClick={() => setSldSdbId(sdb.id)} className={`shrink-0 px-4 py-2 rounded-lg text-sm font-bold transition ${effectiveSldSdbId === sdb.id ? 'bg-slate-800 text-white shadow' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                              {sdb.name}
+                            </button>
+                         ))}
+                         {sdbs.length === 0 && <span className="text-sm text-slate-400 italic">No SDB available.</span>}
+                      </div>
+
+                      <button onClick={handlePrint} className="shrink-0 flex items-center gap-2 px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold shadow transition w-full md:w-auto justify-center">
+                        <PrinterIcon className="w-4 h-4" /> Print Diagram
+                      </button>
+                    </div>
+
+                    <div className="bg-white shadow border border-slate-200 p-8 print-area overflow-x-auto relative min-h-[600px]">
+                      
+                      {/* Document Titles */}
+                      <div className="border-b-2 border-slate-800 pb-4 mb-8 flex justify-between items-end">
+                        <div className="w-2/3">
+                          <h2 className="text-2xl font-bold tracking-tight text-slate-900 uppercase">Single Line Diagram (SLD)</h2>
+                          <div className="flex items-center text-slate-600 mt-1">
+                             <span className="text-sm font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">Board Reference: {sldSdbName}</span>
+                          </div>
+                        </div>
+                        <div className="text-right text-xs text-slate-600">
+                           <p><strong>Project:</strong> {clientInfo.projectName || "N/A"}</p>
+                           <p><strong>Voltage:</strong> {settings.voltage}V | <strong>PF:</strong> {settings.powerFactor}</p>
                         </div>
                       </div>
+
+                      {/* MAIN SDB DRAWING */}
+                      {sldPowerLoads.length === 0 ? (
+                        <div className="text-center py-20 text-slate-400">No circuits connected to {sldSdbName}. Add loads in Power Tab.</div>
+                      ) : (
+                        (() => {
+                           // Extract unique cable sizes to draw horizontal background lines
+                           const sldUniqueCables = Array.from(new Set(sldPowerLoads.map(pl => getCableSize(getMcbSize(calculateCurrent(pl.finalWatt))))));
+                           
+                           return (
+                            <div className="flex flex-col items-center min-w-[800px] mb-20 relative mt-8">
+                              
+                              {/* Incoming Line */}
+                              <div className="flex flex-col items-center">
+                                 <div className="text-[10px] font-bold text-slate-700 text-center uppercase mb-1 leading-tight">
+                                     MDB<br/>
+                                     <span className="text-slate-500 font-medium">{getCableSize(sldTotalCurrent)}</span>
+                                 </div>
+                                 <div className="w-[1.5px] h-10 bg-slate-800 relative z-10"></div>
+                                 
+                                 {/* Main Arc Breaker */}
+                                 <div className="flex items-center ml-8 z-10 bg-white">
+                                     <SdbBreakerIcon />
+                                     <span className="text-[11px] font-bold text-slate-800 ml-1">{getMcbSize(sldTotalCurrent)}A</span>
+                                 </div>
+                                 
+                                 <div className="w-[1.5px] h-10 bg-slate-800 relative z-10"></div>
+                              </div>
+                              
+                              {/* SDB Solid Box */}
+                              <div className="w-[90%] bg-slate-800 border-2 border-slate-800 py-1.5 text-center shadow-sm relative z-10">
+                                  <span className="text-white font-extrabold text-sm tracking-widest">{sldSdbName}</span>
+                              </div>
+                              
+                              {/* Outgoing Branches Container */}
+                              <div className="flex justify-around w-[90%] mt-0 relative z-10">
+                                 
+                                 {/* Horizontal Background Cables */}
+                                 <div className="absolute top-[20px] w-full flex flex-col gap-[30px] z-0 px-2">
+                                      {sldUniqueCables.map((cable, idx) => (
+                                           <div key={idx} className="w-full h-[1.5px] bg-slate-400 relative">
+                                                <span className="absolute right-0 -top-3 text-[9px] font-bold text-slate-600 bg-white px-2">
+                                                    {cable}
+                                                </span>
+                                           </div>
+                                      ))}
+                                 </div>
+
+                                 {/* Drop Lines */}
+                                 {sldPowerLoads.map((pl, index) => {
+                                   const currentA = calculateCurrent(pl.finalWatt);
+                                   const mcbSize = getMcbSize(currentA);
+                                   const myCable = getCableSize(mcbSize);
+                                   const cableIdx = sldUniqueCables.indexOf(myCable);
+                                   const dotTop = 20 + (cableIdx * 31.5); // 1.5px border + 30px gap
+
+                                   return (
+                                     <div key={pl.id} className="flex flex-col items-center w-16 relative z-10">
+                                        
+                                        {/* Drop Line with Connection Node */}
+                                        <div className="w-[1.5px] h-32 bg-slate-800 relative">
+                                             <div className="absolute left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-800 rounded-full" style={{ top: `${dotTop - 3}px` }}></div>
+                                        </div>
+                                        
+                                        {/* Branch SP MCB */}
+                                        <div className="flex items-center ml-8 bg-white py-1">
+                                             <SdbBreakerIcon />
+                                             <span className="text-[10px] font-bold text-slate-800 ml-1">{mcbSize}A</span>
+                                        </div>
+                                        
+                                        {/* Line down to load */}
+                                        <div className="w-[1.5px] h-12 bg-slate-800 relative">
+                                            {/* Arrow tip */}
+                                            <svg width="8" height="8" viewBox="0 0 24 24" className="absolute -bottom-1 left-1/2 -translate-x-1/2 fill-slate-800"><polygon points="12 24 0 0 24 0"></polygon></svg>
+                                        </div>
+                                        
+                                        {/* Load Description */}
+                                        <div className="mt-3 text-center px-1 min-w-[60px] max-w-[80px]">
+                                           <div className="text-[10px] font-extrabold text-slate-900 leading-tight break-words">
+                                               {pl.displayName}
+                                           </div>
+                                        </div>
+
+                                     </div>
+                                   );
+                                 })}
+                              </div>
+                            </div>
+                           );
+                        })()
+                      )}
+
+                      {/* PAGE BREAK FOR PRINTING */}
+                      <div className="page-break"></div>
+
+                      {/* --- SUB DIAGRAMS FOR GROUPS & SBs (Based on the new reference image) --- */}
+                      {sldPowerLoads.filter(pl => pl.type === 'GROUP').length > 0 && (
+                          <div className="mt-4">
+                              <h3 className="text-xl font-bold text-slate-800 mb-12 text-center uppercase tracking-widest bg-slate-100 py-2 border-y-4 border-slate-800">Switchboard (SB) Single Line Diagrams</h3>
+                              
+                              <div className="flex flex-col gap-16 pb-12">
+                                  {sldPowerLoads.filter(pl => pl.type === 'GROUP').map(groupLoad => {
+                                      const groupData = lightingGroupsMap[groupLoad.refId];
+                                      if (!groupData) return null;
+
+                                      return (
+                                        <div key={groupData.id} className="relative bg-white w-full overflow-x-auto border border-slate-200 p-8 shadow-sm">
+                                            {/* Header Section */}
+                                            <div className="font-extrabold text-lg text-slate-800 uppercase absolute top-4 left-6">
+                                                {groupData.name} <span className="text-slate-500 font-bold ml-2 text-sm">From {sldSdbName}</span>
+                                            </div>
+
+                                            <div className="flex flex-col items-center mt-6 w-full min-w-[800px] relative">
+                                                {/* Incoming Top Line */}
+                                                <div className="text-[10px] font-extrabold text-slate-600 uppercase mb-1">FROM {sldSdbName}</div>
+                                                <div className="text-[9px] font-bold text-slate-500 mb-1 text-center whitespace-nowrap">
+                                                    BYA 2X1CX2.5 mm² + 1.5mm² ECC
+                                                </div>
+                                                <div className="w-[1.5px] h-12 bg-slate-800"></div>
+
+                                                {/* Horizontal SB Bus & Boards */}
+                                                <div className="w-full relative flex flex-col items-center">
+                                                    {/* Top horizontal distribution line connecting all SBs */}
+                                                    <div className="absolute top-0 w-[calc(100%-100px)] h-[1.5px] bg-slate-800"></div>
+                                                    
+                                                    {/* Container for the background cable lines and the SB boxes */}
+                                                    <div className="flex justify-around items-start w-full pt-6 gap-6 relative">
+                                                        
+                                                        {/* Horizontal background cables (1.5mm and 2.5mm) */}
+                                                        <div className="absolute top-[100px] w-full flex flex-col gap-[30px] z-0 px-4">
+                                                            <div className="w-full h-[1px] bg-slate-400 relative">
+                                                                <span className="absolute right-0 -top-3 text-[9px] font-bold text-slate-500 bg-white pr-2">BYA 2X1CX1.5 mm²</span>
+                                                            </div>
+                                                            <div className="w-full h-[1px] bg-slate-400 relative">
+                                                                <span className="absolute right-0 -top-3 text-[9px] font-bold text-slate-500 bg-white pr-2">BYA 2X1CX2.5 mm²</span>
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Iterating through each Switchboard (SB) */}
+                                                        {groupData.boards.map((board, bIdx) => (
+                                                            <div key={board.id} className="flex flex-col items-center relative z-10 min-w-[140px]">
+                                                                {/* Connection down to the SB box */}
+                                                                <div className="w-[1.5px] h-6 bg-slate-800 absolute -top-6"></div>
+                                                                
+                                                                {/* SB Box Style */}
+                                                                <div className="border-[1.5px] border-slate-800 px-6 py-2 text-[12px] font-extrabold text-center bg-white w-[80%] shadow-sm">
+                                                                    {board.name}
+                                                                </div>
+
+                                                                {/* The individual switches dropping from the SB */}
+                                                                <div className="flex justify-center mt-0 w-full px-2 relative">
+                                                                    {/* Horizontal connector immediately under the SB box */}
+                                                                    <div className="absolute top-0 w-[calc(100%-20px)] h-[1.5px] bg-slate-800"></div>
+                                                                    
+                                                                    {/* Duplicate switch for each qty in the points array */}
+                                                                    {board.points.flatMap(p => Array.from({length: p.qty}).map((_, i) => (
+                                                                        <div key={`${p.id}-${i}`} className="flex flex-col items-center w-8">
+                                                                            <div className="w-[1.5px] h-3 bg-slate-800"></div>
+                                                                            <SwitchIcon />
+                                                                            <div className="w-[1.5px] h-[75px] bg-slate-800 relative">
+                                                                                {/* Arrow pointing down to load */}
+                                                                                <svg width="8" height="8" viewBox="0 0 24 24" className="fill-slate-800 absolute -bottom-1 left-1/2 -translate-x-1/2">
+                                                                                    <polygon points="12 24 0 0 24 0"></polygon>
+                                                                                </svg>
+                                                                            </div>
+                                                                            <div className="text-[10px] mt-2 font-bold text-slate-800 bg-white px-0.5 whitespace-nowrap">{p.name}</div>
+                                                                        </div>
+                                                                    )))}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                      );
+                                  })}
+                              </div>
+                          </div>
+                      )}
+
                     </div>
                   </div>
                 )}
@@ -538,9 +1095,24 @@
                 {/* --- TAB: REPORT (Print Area) --- */}
                 {activeTab === 'SUMMARY' && (
                   <div className="space-y-6">
-                    <div className="flex justify-end no-print">
-                      <button onClick={handlePrint} className="flex items-center gap-2 px-6 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg font-bold shadow transition">
-                        <PrinterIcon className="w-4 h-4" /> Print Report
+                    
+                    {/* Report Selection and Print Options (No Print) */}
+                    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-center gap-4 no-print">
+                      <div className="flex items-center gap-3 w-full md:w-auto overflow-x-auto pb-2 md:pb-0">
+                         <span className="text-sm font-bold text-slate-700 shrink-0">Report For:</span>
+                         {sdbs.map(sdb => (
+                            <button key={sdb.id} onClick={() => setReportSdbId(sdb.id)} className={`shrink-0 px-4 py-2 rounded-lg text-sm font-bold transition ${effectiveReportSdbId === sdb.id ? 'bg-slate-800 text-white shadow' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                              {sdb.name}
+                            </button>
+                         ))}
+                         {sdbs.length === 0 && <span className="text-sm text-slate-400 italic">No SDB added yet.</span>}
+                      </div>
+
+                      <button onClick={handlePrint} className="shrink-0 flex items-center gap-2 px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold shadow transition w-full md:w-auto justify-center">
+                        <PrinterIcon className="w-4 h-4" /> Print Document
+                      </button>
+                      <button onClick={() => setSaveModalOpen(true)} className="shrink-0 flex items-center gap-2 px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold shadow transition w-full md:w-auto justify-center">
+                        <SaveIcon className="w-4 h-4" /> Save to Cloud
                       </button>
                     </div>
 
@@ -567,7 +1139,10 @@
                       <div className="border-b-2 border-slate-800 pb-4 mb-6 flex justify-between items-end">
                         <div className="w-2/3">
                           <input type="text" value={printHeaders.reportTitle} onChange={(e) => updatePrintHeader('reportTitle', e.target.value)} className="print-editable text-2xl font-bold tracking-tight text-slate-900 uppercase w-full block" />
-                          <input type="text" value={printHeaders.reportSubtitle} onChange={(e) => updatePrintHeader('reportSubtitle', e.target.value)} className="print-editable text-sm text-slate-500 w-full block" />
+                          <div className="flex items-center text-slate-600 mt-1">
+                             <input type="text" value={printHeaders.reportSubtitle} onChange={(e) => updatePrintHeader('reportSubtitle', e.target.value)} className="print-editable text-sm w-auto mr-1" />
+                             <span className="text-sm font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">({reportSdbName})</span>
+                          </div>
                         </div>
                         <div className="text-right text-xs text-slate-600">
                            <p><strong>Project:</strong> {clientInfo.projectName || "N/A"}</p>
@@ -596,13 +1171,13 @@
                             </td>
                           </tr>
 
-                          {lightingGroupsList.length === 0 ? (
-                            <tr><td colSpan="5" className="p-3 text-center text-slate-400 text-xs">No records.</td></tr>
+                          {reportLightingGroups.length === 0 ? (
+                            <tr><td colSpan="5" className="p-3 text-center text-slate-400 text-xs">No lighting groups are linked to this SDB.</td></tr>
                           ) : (
-                            lightingGroupsList.map((group, gIndex) => (
+                            reportLightingGroups.map((group, gIndex) => (
                               <React.Fragment key={`P-L-${gIndex}`}>
                                 <tr className="bg-slate-50/50 font-semibold text-slate-700">
-                                  <td className="p-2 border border-slate-300" colSpan="5">{group.name}</td>
+                                  <td className="p-2 border border-slate-300" colSpan="5">{group.displayName}</td>
                                 </tr>
                                 {group.boards.map((b, bIndex) => (
                                   <React.Fragment key={`B-${bIndex}`}>
@@ -635,13 +1210,13 @@
                             </td>
                           </tr>
 
-                          {processedPowerLoads.length === 0 ? (
+                          {reportPowerLoads.length === 0 ? (
                             <tr><td colSpan="5" className="p-3 text-center text-slate-400 text-xs">No records.</td></tr>
                           ) : (
-                            processedPowerLoads.map((pl, pIndex) => (
+                            reportPowerLoads.map((pl, pIndex) => (
                               <tr key={`P-summary-${pIndex}`} className="text-xs text-slate-700">
-                                <td className="p-2 border border-slate-300">{pl.type === 'GROUP' ? 'Linked Circuit' : 'Direct Circuit'}</td>
-                                <td className="p-2 border border-slate-300 font-medium">{pl.displayName} (DF: {pl.diversity})</td>
+                                <td className="p-2 border border-slate-300">{pl.displayName} (DF: {pl.diversity})</td>
+                                <td className="p-2 border border-slate-300 font-medium">Connected Load: {(pl.displayWatt * pl.qty).toFixed(1)} W</td>
                                 <td className="p-2 text-center border border-slate-300">{pl.qty}</td>
                                 <td className="p-2 text-right border border-slate-300">{pl.finalWatt.toFixed(1)} W</td>
                                 <td className="p-2 text-right border border-slate-300">{calculateCurrent(pl.finalWatt)} A</td>
@@ -651,9 +1226,9 @@
 
                           {/* Final Row */}
                           <tr className="bg-slate-100 font-extrabold text-sm border-t-4 border-slate-800">
-                            <td colSpan="3" className="p-3 text-right uppercase text-slate-800">Total Calculated Load:</td>
-                            <td className="p-3 text-right border border-slate-300 text-slate-900">{totalDesignPower.toFixed(1)} W</td>
-                            <td className="p-3 text-right border border-slate-300 text-slate-900">{finalTotalCurrent} A</td>
+                            <td colSpan="3" className="p-3 text-right uppercase text-slate-800">Total Calculated Load for {reportSdbName}:</td>
+                            <td className="p-3 text-right border border-slate-300 text-slate-900">{reportTotalWatt.toFixed(1)} W</td>
+                            <td className="p-3 text-right border border-slate-300 text-slate-900">{reportTotalCurrent} A</td>
                           </tr>
 
                         </tbody>
@@ -671,18 +1246,98 @@
                     </div>
                   </div>
                 )}
+
+                {/* --- TAB: HISTORY --- */}
+                {activeTab === 'HISTORY' && (
+                  <div className="space-y-6 max-w-4xl mx-auto no-print">
+                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                      <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+                        <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><HistoryIcon className="w-6 h-6 text-blue-600"/> Saved Reports</h2>
+                        <span className="text-xs font-bold text-slate-500 uppercase bg-slate-200 px-3 py-1 rounded-full">{savedReports.length} Reports</span>
+                      </div>
+                      
+                      <div className="p-0">
+                        {savedReports.length === 0 ? (
+                            <div className="text-center py-20">
+                                <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                                    <HistoryIcon className="w-8 h-8 text-slate-300" />
+                                </div>
+                                <p className="text-slate-500 font-medium">No saved reports found in cloud storage.</p>
+                                <p className="text-slate-400 text-sm mt-1">Go to the Report tab and click "Save to Cloud" to store your work.</p>
+                            </div>
+                        ) : (
+                            <div className="divide-y divide-slate-100">
+                                {savedReports.map(report => (
+                                    <div key={report.id} className="p-4 sm:p-6 hover:bg-slate-50 transition flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                                        <div>
+                                            <h3 className="font-bold text-slate-800 text-lg">{report.name}</h3>
+                                            <div className="text-sm text-slate-500 flex items-center gap-2 mt-1">
+                                                <span className="bg-slate-100 px-2 py-0.5 rounded text-xs font-medium">{report.dateString}</span>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-3 w-full sm:w-auto">
+                                            <button onClick={() => loadReport(report)} className="flex-1 sm:flex-none px-4 py-2 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg text-sm font-bold transition border border-blue-200">
+                                                Load Data
+                                            </button>
+                                            <button onClick={() => deleteReport(report.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition border border-transparent hover:border-red-200" title="Delete Report">
+                                                <Trash2 className="w-5 h-5" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </main>
 
               {/* Status Bar */}
               <div className="fixed bottom-0 left-0 w-full bg-slate-100 text-slate-600 border-t border-slate-200 z-30 no-print text-xs">
                 <div className="max-w-6xl mx-auto px-4 py-2 flex justify-between items-center">
-                  <span className="font-semibold tracking-wider uppercase text-[10px]">System Status: Online</span>
-                  <div className="flex gap-4">
-                    <span>Power: <strong className="text-slate-800">{totalDesignPower.toFixed(1)} W</strong></span>
-                    <span>Current: <strong className="text-slate-800">{finalTotalCurrent} A</strong></span>
+                  <span className="font-semibold tracking-wider uppercase text-[10px]">System Status: Online {user ? '(Cloud Synced)' : ''}</span>
+                  <div className="flex items-center gap-4">
+                    <span className="hidden sm:inline">Facility Total Power:</span>
+                    <span><strong className="text-slate-800">{globalTotalPower.toFixed(1)} W</strong></span>
+                    <span className="text-slate-300">|</span>
+                    <span>Total Current: <strong className="text-slate-800">{globalTotalCurrent} A</strong></span>
                   </div>
                 </div>
               </div>
+
+              {/* Save Modal */}
+              {saveModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm px-4">
+                  <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
+                    <div className="flex justify-between items-center p-4 border-b border-slate-100 bg-slate-50">
+                      <h3 className="font-bold text-slate-800">Save Report to Cloud</h3>
+                      <button onClick={() => setSaveModalOpen(false)} className="text-slate-400 hover:text-slate-700 transition">
+                        <XIcon className="w-5 h-5" />
+                      </button>
+                    </div>
+                    <div className="p-6">
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Report Name</label>
+                      <input 
+                        type="text" 
+                        value={newReportName} 
+                        onChange={(e) => setNewReportName(e.target.value)} 
+                        className="w-full border border-slate-300 rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500" 
+                        placeholder="e.g., Final Design - Version 1" 
+                        autoFocus
+                        onKeyDown={(e) => e.key === 'Enter' && handleSaveReport()}
+                      />
+                      <p className="text-xs text-slate-500 mt-2">Date and time will be automatically recorded.</p>
+                    </div>
+                    <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+                      <button onClick={() => setSaveModalOpen(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-lg text-sm font-medium transition">Cancel</button>
+                      <button onClick={handleSaveReport} disabled={isSaving || !newReportName.trim()} className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-bold shadow-sm transition flex items-center gap-2">
+                        {isSaving ? 'Saving...' : 'Save Now'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           );
         }
