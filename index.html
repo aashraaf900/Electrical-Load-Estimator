@@ -35,7 +35,7 @@
                 padding: 0 !important;
             }
             @page {
-                size: landscape;
+                size: A4 portrait;
                 margin: 10mm;
             }
             table {
@@ -1191,8 +1191,13 @@
                                     {b.points.map((p, pIndex) => (
                                       <tr key={`pt-${pIndex}`} className="text-slate-500 text-[10px]">
                                         <td className="p-1 pl-8 border border-slate-200 border-r-0"></td>
-                                        <td className="p-1 border border-slate-200">{p.name} ({p.watt}W)</td>
-                                        <td className="p-1 text-center border border-slate-200">{p.qty}</td>
+                                        <td className="p-1 border border-slate-200">
+                                           <input type="text" value={p.name} onChange={(e) => updateLightingPoint(group.id, b.id, p.id, 'name', e.target.value)} className="w-24 print-editable bg-transparent inline-block" /> 
+                                           (<input type="number" min="0" value={p.watt === 0 ? '' : p.watt} onChange={(e) => updateLightingPoint(group.id, b.id, p.id, 'watt', e.target.value)} className="w-10 text-center print-editable bg-transparent inline-block" />W)
+                                        </td>
+                                        <td className="p-1 text-center border border-slate-200">
+                                           <input type="number" min="1" value={p.qty || ''} onChange={(e) => updateLightingPoint(group.id, b.id, p.id, 'qty', e.target.value)} className="w-10 text-center print-editable bg-transparent inline-block" />
+                                        </td>
                                         <td className="p-1 text-right border border-slate-200">{p.qty * p.watt}</td>
                                         <td className="p-1 text-right border border-slate-200">{calculateCurrent(p.qty * p.watt)}</td>
                                       </tr>
@@ -1215,9 +1220,25 @@
                           ) : (
                             reportPowerLoads.map((pl, pIndex) => (
                               <tr key={`P-summary-${pIndex}`} className="text-xs text-slate-700">
-                                <td className="p-2 border border-slate-300">{pl.displayName} (DF: {pl.diversity})</td>
-                                <td className="p-2 border border-slate-300 font-medium">Connected Load: {(pl.displayWatt * pl.qty).toFixed(1)} W</td>
-                                <td className="p-2 text-center border border-slate-300">{pl.qty}</td>
+                                <td className="p-2 border border-slate-300">
+                                  {pl.type === 'GROUP' ? pl.displayName : (
+                                    <input type="text" value={pl.name} onChange={(e) => updatePowerLoad(pl.id, 'name', e.target.value)} className="w-24 print-editable bg-transparent inline-block" placeholder="Load Name" />
+                                  )} 
+                                  {' '}(DF: <input type="number" step="0.05" min="0" max="1" value={pl.diversity} onChange={(e) => updatePowerLoad(pl.id, 'diversity', e.target.value)} className="w-14 text-center print-editable bg-transparent inline-block font-bold text-amber-600" />)
+                                </td>
+                                <td className="p-2 border border-slate-300 font-medium">
+                                  Connected Load: 
+                                  {pl.type === 'GROUP' ? (
+                                     ` ${(pl.displayWatt * pl.qty).toFixed(1)} W`
+                                  ) : (
+                                     <React.Fragment>
+                                       <input type="number" min="0" value={pl.watt === 0 ? '' : pl.watt} onChange={(e) => updatePowerLoad(pl.id, 'watt', e.target.value)} className="w-12 text-right print-editable bg-transparent inline-block ml-1" /> W
+                                     </React.Fragment>
+                                  )}
+                                </td>
+                                <td className="p-2 text-center border border-slate-300">
+                                  <input type="number" min="1" value={pl.qty || ''} disabled={pl.type === 'GROUP'} onChange={(e) => updatePowerLoad(pl.id, 'qty', e.target.value)} className="w-10 text-center print-editable bg-transparent inline-block" />
+                                </td>
                                 <td className="p-2 text-right border border-slate-300">{pl.finalWatt.toFixed(1)} W</td>
                                 <td className="p-2 text-right border border-slate-300">{calculateCurrent(pl.finalWatt)} A</td>
                               </tr>
